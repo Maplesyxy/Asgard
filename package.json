@@ -1,0 +1,93 @@
+{
+  "name": "asgard",
+  "version": "1.0.0",
+  "description": "A local home for Astro and its living memory tree",
+  "author": "Asgard",
+  "private": true,
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc --noEmit && node scripts/build.mjs && vite build",
+    "test": "node scripts/test.mjs",
+    "dist": "npm run build && electron-builder --mac dmg --arm64",
+    "postinstall": "node scripts/native.mjs",
+    "smoke": "npm run build && electron . --smoke-test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "ajv": "^8.17.1",
+    "better-sqlite3": "^12.11.1",
+    "lucide-react": "^0.468.0",
+    "openai": "^6.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^40.0.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.0",
+    "prettier": "^3.9.9",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  },
+  "build": {
+    "appId": "local.asgard.desktop",
+    "productName": "Asgard",
+    "asar": true,
+    "directories": {
+      "output": "outputs/installer"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "icon": "assets/asgard.icns"
+    },
+    "dmg": {
+      "title": "Asgard",
+      "contents": [
+        {
+          "x": 140,
+          "y": 170
+        },
+        {
+          "x": 420,
+          "y": 170,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "npmRebuild": false,
+    "electronDist": "node_modules/electron/dist"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
