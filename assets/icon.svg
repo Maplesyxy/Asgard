@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a4133"/>
+      <stop offset="1" stop-color="#1a2620"/>
+    </linearGradient>
+  </defs>
+  <!-- macOS Big Sur grid: an 824pt squircle centred on a 1024pt canvas. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#tile)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" ry="184.5"
+        fill="none" stroke="#F4F7F5" stroke-opacity="0.10" stroke-width="3"/>
+  <!--
+    Valknut. Three equilateral triangles, circumradius 230, whose centroids sit
+    120 from the centre (512, 600) at 120-degree intervals: up, lower-left and
+    lower-right. That offset is what opens the hollow middle; a smaller one
+    collapses the three into a single outline.
+  -->
+  <g fill="none" stroke-width="27" stroke-linejoin="round">
+    <path stroke="#7899D4" d="M 408 430 L 209 775 L 607 775 Z"/>
+    <path stroke="#EF8557" d="M 616 430 L 417 775 L 815 775 Z"/>
+    <path stroke="#F4F7F5" d="M 512 250 L 313 595 L 711 595 Z"/>
+  </g>
+</svg>

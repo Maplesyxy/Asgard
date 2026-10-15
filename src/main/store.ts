@@ -197,6 +197,7 @@ export class Store {
         "/sessions",
         "/knowledge",
         "/archive",
+        "/research",
       ].includes(path)
     )
       throw new Error("Top-level structure cannot be moved.");
@@ -304,6 +305,56 @@ export class Store {
         .all() as { id: string }[]
     ).map((r) => this.session(r.id));
   }
+  /**
+   * Branch a conversation: a new session seeded with everything up to and
+   * including one message. The original is untouched, so a direction can be
+   * tried without losing the thread it came from.
+   */
+  forkSession(id: string, upTo: number) {
+    const source = this.session(id);
+    const take = source.messages.slice(0, Math.max(1, upTo + 1));
+    if (!take.length) throw new Error("Nothing to branch from.");
+    // `project` is already a tree path; newSession slugifies a *name*, so the
+    // path is carried over directly instead of being slugified a second time.
+    const forked = this.newSession("", source.private);
+    this.db
+      .prepare("UPDATE sessions SET project=? WHERE id=?")
+      .run(source.project, forked.id);
+    forked.project = source.project;
+    forked.title = ("⑂ " + source.title).slice(0, 200);
+    forked.messages = take;
+    forked.context = source.context;
+    forked.compacted = 0;
+    this.saveSession(forked);
+    return this.session(forked.id);
+  }
+  /** Rename a conversation. The session node title follows it. */
+  renameSession(id: string, title: string) {
+    const s = this.session(id);
+    s.title = title.trim().slice(0, 200) || "Untitled session";
+    this.saveSession(s);
+    return s;
+  }
+  /**
+   * Permanently remove a conversation: its sessions row and the whole
+   * /sessions/<date>/<id> subtree, deepest path first so parent references go
+   * last. Memory the conversation wrote elsewhere in the tree is untouched.
+   */
+  deleteSession(id: string) {
+    const row = this.db
+      .prepare("SELECT date FROM sessions WHERE id=?")
+      .get(id) as { date: string } | undefined;
+    if (!row) throw new Error("Session not found.");
+    const base = "/sessions/" + row.date + "/" + id;
+    this.db.transaction(() => {
+      const doomed = this.all()
+        .filter((n) => within(n.path, base))
+        .sort((a, b) => b.path.length - a.path.length);
+      for (const n of doomed)
+        this.db.prepare("DELETE FROM nodes WHERE id=?").run(n.id);
+      this.db.prepare("DELETE FROM sessions WHERE id=?").run(id);
+    })();
+  }
   saveSession(s: Session) {
     this.db.transaction(() => {
       this.db
@@ -334,7 +385,12 @@ export class Store {
         path: base + "/raw",
         kind: "artifact",
         title: "Full transcript",
-        content: JSON.stringify(s.messages),
+        // Provider thinking/reasoning is display-only and must never reach
+        // disk. Stripping here (rather than at the call site) means no caller
+        // can persist it by accident. See AGENTS.md.
+        content: JSON.stringify(
+          s.messages.map(({ reasoning: _reasoning, ...m }) => m),
+        ),
         summary: "Full user/assistant transcript. Never loaded automatically.",
         private: s.private,
       });

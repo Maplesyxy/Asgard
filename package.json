@@ -1,6 +1,6 @@
 {
   "name": "asgard",
-  "version": "1.0.0",
+  "version": "2026.10.15",
   "description": "A local home for Astro and its living memory tree",
   "author": "Asgard",
   "private": true,
@@ -11,7 +11,9 @@
     "test": "node scripts/test.mjs",
     "dist": "npm run build && electron-builder --mac dmg --arm64",
     "postinstall": "node scripts/native.mjs",
-    "smoke": "npm run build && electron . --smoke-test"
+    "smoke": "npm run build && electron . --smoke-test",
+    "icon": "electron scripts/icon.mjs",
+    "eval": "node scripts/eval.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -21,6 +23,8 @@
     "openai": "^6.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^9.1.0",
+    "remark-gfm": "^4.0.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {

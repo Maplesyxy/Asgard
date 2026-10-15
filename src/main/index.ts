@@ -10,7 +10,14 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import { Path, SendSchema, SettingsSchema, WriteNode } from "../shared/types";
+import {
+  Path,
+  PROVIDERS,
+  SendSchema,
+  SettingsSchema,
+  StreamEvent,
+  WriteNode,
+} from "../shared/types";
 import { Store, within } from "./store";
 import { SettingsStore } from "./settings";
 import { Clients, ProviderError } from "./providers";
@@ -30,9 +37,9 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: "Asgard",
-    backgroundColor: "#101212",
+    backgroundColor: "#262624",
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 20, y: 23 },
+    trafficLightPosition: { x: 18, y: 17 },
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       nodeIntegration: false,
@@ -60,6 +67,23 @@ function createWindow() {
       try {
         const report = await win!.webContents.executeJavaScript(
           `({title:document.title,bridge:typeof window.asgard?.state==='function',nodeIntegration:typeof window.require!=='undefined',text:document.body.innerText})`,
+        );
+        // Expand every collapsed disclosure so the smoke frame shows the
+        // reasoning and verification panels rather than just their summaries.
+        await win!.webContents.executeJavaScript(
+          `document.querySelectorAll('details').forEach(d => d.open = true)`,
+        );
+        // Pending IPC (settings, dashboard) resolves after first paint, so wait
+        // for the loading placeholders to clear before capturing.
+        await win!.webContents.executeJavaScript(
+          `new Promise(done => {
+             const start = Date.now();
+             const poll = () => {
+               if (!/Loading /.test(document.body.innerText) || Date.now() - start > 3000) done(true);
+               else setTimeout(poll, 60);
+             };
+             poll();
+           })`,
         );
         // did-finish-load precedes the first composited frame; capturing here
         // yields a blank backgroundColor image. Settle fonts and two rAFs first.
@@ -126,6 +150,14 @@ async function finishAndQuit() {
   }
 }
 app.whenReady().then(() => {
+  // Packaged builds take the icon from the bundle; in development the Dock
+  // would otherwise show Electron's own.
+  if (!app.isPackaged && process.platform === "darwin")
+    try {
+      app.dock?.setIcon(join(process.cwd(), "assets/asgard.png"));
+    } catch {
+      /* a missing icon in development is not worth failing a launch over */
+    }
   const data = app.getPath("userData");
   mkdirSync(data, { recursive: true, mode: 0o700 });
   store = new Store(join(data, "asgard.sqlite"));
@@ -137,7 +169,7 @@ app.whenReady().then(() => {
   const handler = (
     name: string,
     schema: z.ZodTypeAny,
-    fn: (value: any) => unknown,
+    fn: (value: any, event: Electron.IpcMainInvokeEvent) => unknown,
   ) =>
     ipcMain.handle("asgard:" + name, async (event, args) => {
       const url = event.senderFrame?.url;
@@ -151,7 +183,7 @@ app.whenReady().then(() => {
       )
         throw new Error("Untrusted IPC sender.");
       try {
-        return await fn(schema.parse(args));
+        return await fn(schema.parse(args), event);
       } catch (e) {
         if (e instanceof z.ZodError)
           throw new Error(
@@ -210,7 +242,9 @@ app.whenReady().then(() => {
         keys: z
           .object({
             anthropic: z.string().max(1000).optional(),
+            openai: z.string().max(1000).optional(),
             deepseek: z.string().max(1000).optional(),
+            gemini: z.string().max(1000).optional(),
           })
           .strict(),
       })
@@ -242,8 +276,29 @@ app.whenReady().then(() => {
       store.saveSession(s);
     },
   );
-  handler("send", SendSchema, (v) => engine.send(v));
+  // Streaming progress goes back to the one trusted frame that asked for it.
+  handler("send", SendSchema, (v, event) =>
+    engine.send(v, (e: StreamEvent) => {
+      if (!event.sender.isDestroyed()) event.sender.send("asgard:stream", e);
+    }),
+  );
+  // Deliberately outside `idle()`: stopping is only useful while busy.
+  handler("cancel", z.undefined(), () => engine.cancel());
   handler("endSession", z.string().uuid(), (id) => engine.end(id));
+  handler("deleteSession", z.string().uuid(), (id) => {
+    idle();
+    store.deleteSession(id);
+  });
+  handler(
+    "renameSession",
+    z
+      .object({ id: z.string().uuid(), title: z.string().trim().max(200) })
+      .strict(),
+    (v) => {
+      idle();
+      store.renameSession(v.id, v.title);
+    },
+  );
   handler(
     "decide",
     z.object({ id: z.string().uuid(), accept: z.boolean() }).strict(),
@@ -252,9 +307,51 @@ app.whenReady().then(() => {
       engine.decide(v.id, v.accept);
     },
   );
+  handler(
+    "forkSession",
+    z
+      .object({
+        id: z.string().uuid(),
+        upTo: z.number().int().min(0).max(5000),
+      })
+      .strict(),
+    (v) => {
+      idle();
+      return store.forkSession(v.id, v.upTo);
+    },
+  );
   handler("dashboard", z.undefined(), () => store.dashboard());
-  handler("testProvider", z.enum(["opus", "deepseek"]), (p) =>
+  handler("testProvider", z.enum(PROVIDERS as [string, ...string[]]), (p) =>
     engine.testProvider(p),
+  );
+  // User-initiated attachment reading. Absolute paths only, and only the ones
+  // the user actually dropped: main re-validates rather than trusting the
+  // renderer, and no agent tool can reach this.
+  handler(
+    "attach",
+    z.array(z.string().min(1).max(4096).startsWith("/")).min(1).max(40),
+    (paths: string[]) => {
+      idle();
+      return engine.attachments.read(paths);
+    },
+  );
+  // The OS file picker is the other user-initiated entry point. Like a drop,
+  // main reads only what the user selected in the dialog.
+  handler("pickFiles", z.undefined(), async () => {
+    idle();
+    if (!win) return [];
+    const result = await dialog.showOpenDialog(win, {
+      title: "Attach files or folders",
+      buttonLabel: "Attach",
+      properties: ["openFile", "openDirectory", "multiSelections"],
+    });
+    if (result.canceled || !result.filePaths.length) return [];
+    return engine.attachments.read(result.filePaths.slice(0, 40));
+  });
+  handler(
+    "releaseAttachments",
+    z.array(z.string().uuid()).max(200),
+    (ids: string[]) => engine.attachments.release(ids),
   );
   createWindow();
   app.on("activate", () => {
